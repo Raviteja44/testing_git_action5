@@ -48,6 +48,27 @@ jobs:
           git checkout -b "${{ github.event.inputs.feature_branch }}" "origin/${{ github.event.inputs.feature_branch }}" || git checkout "${{ github.event.inputs.feature_branch }}" || true
           git rev-parse --abbrev-ref HEAD
 
+      - name: Determine feature branch
+        id: determine_branch
+        run: |
+          # Prefer explicit workflow input (only present for workflow_dispatch)
+          if [ -n "${{ github.event.inputs.feature_branch }}" ]; then
+            echo "Using workflow input feature_branch=${{ github.event.inputs.feature_branch }}"
+            echo "FEATURE_BRANCH=${{ github.event.inputs.feature_branch }}" >> $GITHUB_ENV
+          # For PR events github.head_ref contains the source branch; for push events it is empty
+          elif [ -n "${{ github.head_ref }}" ]; then
+            echo "Using github.head_ref=${{ github.head_ref }}"
+            echo "FEATURE_BRANCH=${{ github.head_ref }}" >> $GITHUB_ENV
+          else
+            # For push events, use GITHUB_REF (refs/heads/branch) and strip the prefix
+            REF_NAME="${GITHUB_REF#refs/heads/}"
+            echo "Using GITHUB_REF branch=${REF_NAME}"
+            echo "FEATURE_BRANCH=${REF_NAME}" >> $GITHUB_ENV
+          fi
+          # echo resolved value to logs for debugging
+          echo "Resolved FEATURE_BRANCH=${FEATURE_BRANCH}"
+        shell: bash
+
       - name: Get changes vs dev
         id: changes
         run: |
@@ -64,26 +85,32 @@ jobs:
         if: ${{ github.event.inputs.environment != 'dev' || github.event_name == 'push' }}
         uses: actions/github-script@v7
         env:
-          FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
+          FEATURE_BRANCH: ${{ env.FEATURE_BRANCH }}
           TARGET_ENV: ${{ github.event.inputs.environment }}
           DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason }}
           CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
           CHANGE_COUNT: ${{ steps.changes.outputs.change_count }}
         with:
           script: |
+            // Guard: ensure FEATURE_BRANCH is present
+            const featureBranch = process.env.FEATURE_BRANCH;
+            if (!featureBranch || featureBranch.trim() === '') {
+              throw new Error(`FEATURE_BRANCH is empty — cannot create pull request. Resolved FEATURE_BRANCH='${featureBranch}'`);
+            }
+
             const changedFiles = process.env.CHANGED_FILES
               ? process.env.CHANGED_FILES.split('\n').filter(Boolean)
               : [];
             const changeCount = Number(process.env.CHANGE_COUNT || changedFiles.length || 0);
 
             if (changeCount === 0) {
-              console.log('No changes detected vs dev — skipping PR creation.');
+              core.info('No changes detected vs dev — skipping PR creation.');
               return;
             }
 
             const prBodyParts = [];
             prBodyParts.push('## Feature Deployment to ' + (process.env.TARGET_ENV ? process.env.TARGET_ENV.toUpperCase() : 'DEV'));
-            prBodyParts.push('**Source Branch:** ' + process.env.FEATURE_BRANCH);
+            prBodyParts.push('**Source Branch:** ' + featureBranch);
             prBodyParts.push('**Target Environment:** ' + (process.env.TARGET_ENV ? process.env.TARGET_ENV.toUpperCase() : 'DEV'));
             prBodyParts.push('**Deployment Reason:** ' + (process.env.DEPLOYMENT_REASON || 'Automated PR'));
             prBodyParts.push('');
@@ -97,7 +124,7 @@ jobs:
             const prBody = prBodyParts.join('\n');
 
             const baseBranch = 'dev';
-            const headBranch = process.env.FEATURE_BRANCH;
+            const headBranch = featureBranch;
 
             // Avoid creating duplicate PRs
             const existing = await github.rest.pulls.list({
