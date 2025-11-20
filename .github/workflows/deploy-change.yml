@@ -56,10 +56,13 @@ jobs:
         with:
           script: |
             const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
+            const changeCount = `${{ steps.changes.outputs.change_count }}`;
+            const deploymentReason = `${{ github.event.inputs.deployment_reason }}`;
+            
             const prBody = `## Independent Feature Deployment
 **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
 **Feature Branch:** ${process.env.FEATURE_BRANCH}
-**Deployment Reason:** ${{ github.event.inputs.deployment_reason }}
+**Deployment Reason:** ${deploymentReason}
 
 ### Files being deployed (ONLY your changes):
 \`\`\`
@@ -67,7 +70,7 @@ ${changedFiles.join('\n')}
 \`\`\`
 
 ### Changes included:
-${{ steps.changes.outputs.change_count }} files modified
+${changeCount} files modified
 
 **This deploys ONLY the changes from ${process.env.FEATURE_BRANCH} branch**`;
 
