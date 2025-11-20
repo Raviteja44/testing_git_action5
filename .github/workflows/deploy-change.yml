@@ -45,15 +45,21 @@ jobs:
         env:
           FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
           TARGET_ENV: ${{ github.event.inputs.environment }}
+          DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason }}
+          CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
+          CHANGE_COUNT: ${{ steps.changes.outputs.change_count }}
         with:
           script: |
-            const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
-            const changeCount = `${{ steps.changes.outputs.change_count }}`;
-            
+            const changedFiles = process.env.CHANGED_FILES
+              ? process.env.CHANGED_FILES.split('\n').filter(Boolean)
+              : [];
+
+            const changeCount = process.env.CHANGE_COUNT;
+
             const prBody = `## Feature Deployment to ${process.env.TARGET_ENV.toUpperCase()}
 **Source Branch:** ${process.env.FEATURE_BRANCH}
 **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
-**Deployment Reason:** ${{ github.event.inputs.deployment_reason }}
+**Deployment Reason:** ${process.env.DEPLOYMENT_REASON}
 
 ### Changes included (${changeCount} files):
 \`\`\`
