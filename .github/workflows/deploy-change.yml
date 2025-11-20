@@ -8,9 +8,9 @@ on:
         required: true
         type: choice
         options:
-        - dev
-        - uat
-        - prod
+          - dev
+          - uat
+          - prod
       feature_branch:
         description: 'Feature branch to deploy'
         required: true
@@ -23,72 +23,77 @@ jobs:
   deploy-feature:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
-    
+
     steps:
-    - name: Checkout specific feature branch
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.feature_branch }}
-        
-    - name: Get changes for this feature only
-      id: changes
-      run: |
-        # Get the base branch (what we're comparing against)
-        if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
-          BASE_BRANCH="dev"
-        elif [ "${{ github.event.inputs.environment }}" == "uat" ]; then
-          BASE_BRANCH="uat"  
-        else
-          BASE_BRANCH="prod"
-        fi
-        
-        # Fetch the base branch
-        git fetch origin $BASE_BRANCH --depth=1
-        
-        # Get ONLY the files changed in this feature branch compared to base
-        echo "changed_files=$(git diff --name-only origin/$BASE_BRANCH...HEAD)" >> $GITHUB_OUTPUT
-        echo "change_count=$(git diff --name-only origin/$BASE_BRANCH...HEAD | wc -l)" >> $GITHUB_OUTPUT
-        
-    - name: Create Deployment PR
-      if: github.event.inputs.environment != 'dev'
-      uses: actions/github-script@v7
-      env:
-        TARGET_ENV: ${{ github.event.inputs.environment }}
-        FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
-      with:
-        script: |
-          const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
-          
-          const { data: pr } = await github.rest.pulls.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: `🚀 ${process.env.TARGET_ENV.toUpperCase()}: Deploy feature from ${process.env.FEATURE_BRANCH}`,
-            body: `## Independent Feature Deployment
-        
-        **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
-        **Feature Branch:** ${process.env.FEATURE_BRANCH}
-        **Deployment Reason:** ${{ github.event.inputs.deployment_reason }}
-        
-        ### Files being deployed (ONLY your changes):
-        \`\`\`
-        ${changedFiles.join('\n')}
-        \`\`\`
-        
-        ### Changes included:
-        ${{ steps.changes.outputs.change_count }} files modified
-        
-        **This deploys ONLY the changes from ${process.env.FEATURE_BRANCH} branch**`,
-            head: process.env.FEATURE_BRANCH,
-            base: process.env.TARGET_ENV
-          });
-          
-          console.log(`Deployment PR created: ${pr.html_url}`);
-          
-    - name: Deploy to Environment
-      run: |
-        echo "🎯 DEPLOYING ONLY YOUR FEATURE"
-        echo "📁 Your files being deployed:"
-        echo "${{ steps.changes.outputs.changed_files }}"
-        echo ""
-        echo "✅ Deploying to ${{ github.event.inputs.environment }} environment"
-        echo "🔒 Other team members' work is NOT affected"
+      - name: Checkout specific feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.feature_branch }}
+
+      - name: Get changes for this feature only
+        id: changes
+        run: |
+          # Determine base branch
+          if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
+            BASE_BRANCH="dev"
+          elif [ "${{ github.event.inputs.environment }}" == "uat" ]; then
+            BASE_BRANCH="uat"
+          else
+            BASE_BRANCH="prod"
+          fi
+
+          # Fetch the base branch for comparison
+          git fetch origin $BASE_BRANCH --depth=1
+
+          # Get changed files compared to base
+          CHANGED_FILES=$(git diff --name-only origin/$BASE_BRANCH...HEAD)
+          echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "change_count=$(echo "$CHANGED_FILES" | wc -l)" >> $GITHUB_OUTPUT
+
+      - name: Create Deployment PR
+        if: github.event.inputs.environment != 'dev'
+        uses: actions/github-script@v7
+        env:
+          TARGET_ENV: ${{ github.event.inputs.environment }}
+          FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
+        with:
+          script: |
+            const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
+
+            const prBody = `
+## Independent Feature Deployment
+
+**Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
+**Feature Branch:** ${process.env.FEATURE_BRANCH}
+**Deployment Reason:** ${{ github.event.inputs.deployment_reason }}
+
+### Files being deployed (ONLY your changes):
+\`\`\`
+${changedFiles.join('\n')}
+\`\`\`
+
+### Changes included:
+${{ steps.changes.outputs.change_count }} files modified
+
+**This deploys ONLY the changes from ${process.env.FEATURE_BRANCH} branch**
+`;
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚀 ${process.env.TARGET_ENV.toUpperCase()}: Deploy feature from ${process.env.FEATURE_BRANCH}`,
+              body: prBody,
+              head: process.env.FEATURE_BRANCH,
+              base: process.env.TARGET_ENV
+            });
+
+            console.log(`Deployment PR created: ${pr.html_url}`);
+
+      - name: Deploy to Environment
+        run: |
+          echo "🎯 DEPLOYING ONLY YOUR FEATURE"
+          echo "📁 Your files being deployed:"
+          echo "${{ steps.changes.outputs.changed_files }}"
+          echo ""
+          echo "✅ Deploying to ${{ github.event.inputs.environment }} environment"
+          echo "🔒 Other team members' work is NOT affected"
