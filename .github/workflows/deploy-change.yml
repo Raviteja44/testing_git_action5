@@ -38,6 +38,7 @@ jobs:
           git fetch origin ${{ github.event.inputs.environment }}
           CHANGED_FILES=$(git diff --name-only origin/${{ github.event.inputs.environment }}...HEAD || echo "")
           echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          # count non-empty lines
           CHANGE_COUNT=$(echo "$CHANGED_FILES" | grep -cve '^\s*$' || echo 0)
           echo "change_count=$CHANGE_COUNT" >> $GITHUB_OUTPUT
 
@@ -57,16 +58,16 @@ jobs:
               : [];
             const changeCount = process.env.CHANGE_COUNT || 0;
             const prBody = `## Feature Deployment to ${process.env.TARGET_ENV.toUpperCase()}
-**Source Branch:** ${process.env.FEATURE_BRANCH}
-**Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
-**Deployment Reason:** ${process.env.DEPLOYMENT_REASON}
+            **Source Branch:** ${process.env.FEATURE_BRANCH}
+            **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
+            **Deployment Reason:** ${process.env.DEPLOYMENT_REASON}
 
-### Changes included (${changeCount} files):
-\`\`\`
-${changedFiles.join('\n')}
-\`\`\`
+            ### Changes included (${changeCount} files):
+            \`\`\`
+            ${changedFiles.join('\n')}
+            \`\`\`
 
-**CODEOWNERS review required for deployment**`;
+            **CODEOWNERS review required for deployment**`;
 
             const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
