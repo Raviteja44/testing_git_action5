@@ -1,6 +1,14 @@
 name: Deploy Feature to Environment
 
 on:
+  # automatic runs for feature branches (for testing/automation)
+  push:
+    # ignore environment branches (do not trigger on pushes to dev/uat/prod)
+    branches-ignore:
+      - dev
+      - uat
+      - prod
+  # keep manual trigger too
   workflow_dispatch:
     inputs:
       environment:
@@ -20,70 +28,102 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   deploy-feature:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.feature_branch }}
+          # When triggered by push, this file is in the pushed ref; when run via dispatch
+          # we use the provided feature_branch input.
+          ref: ${{ github.event.head_ref || github.event.inputs.feature_branch || github.ref }}
           fetch-depth: 0
 
-      - name: Get changes
+      - name: Get changes against dev
         id: changes
         run: |
-          git fetch origin ${{ github.event.inputs.environment }}
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.inputs.environment }}...HEAD || echo "")
-          echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          # fetch dev to compare
+          git fetch origin dev || true
+          CHANGED_FILES=$(git diff --name-only origin/dev...HEAD || true)
+          # normalize to \n-separated list for output
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
           # count non-empty lines
           CHANGE_COUNT=$(echo "$CHANGED_FILES" | grep -cve '^\s*$' || echo 0)
           echo "change_count=$CHANGE_COUNT" >> $GITHUB_OUTPUT
 
-      - name: Create Deployment PR
-        if: github.event.inputs.environment != 'dev'
+      - name: Create Deployment PR (create PR to dev when not deploying directly to dev)
+        if: ${{ github.event.inputs.environment != 'dev' || github.event_name == 'push' }}
         uses: actions/github-script@v7
         env:
-          FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
-          TARGET_ENV: ${{ github.event.inputs.environment }}
-          DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason }}
+          FEATURE_BRANCH: ${{ github.event.inputs.feature_branch || github.head_ref || github.ref_name }}
+          TARGET_ENV: ${{ github.event.inputs.environment || 'dev' }}
+          DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason || 'Automated PR from feature push' }}
           CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
           CHANGE_COUNT: ${{ steps.changes.outputs.change_count }}
         with:
           script: |
+            // Prepare changed files list
             const changedFiles = process.env.CHANGED_FILES
               ? process.env.CHANGED_FILES.split('\n').filter(Boolean)
               : [];
-            const changeCount = process.env.CHANGE_COUNT || 0;
+            const changeCount = process.env.CHANGE_COUNT || (changedFiles.length || 0);
+
+            // If no changes, exit gracefully
+            if (changeCount == 0) {
+              core.info('No changes detected versus dev; skipping PR creation.');
+              return;
+            }
+
+            // Build PR body
             const prBody = `## Feature Deployment to ${process.env.TARGET_ENV.toUpperCase()}
-            **Source Branch:** ${process.env.FEATURE_BRANCH}
-            **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
-            **Deployment Reason:** ${process.env.DEPLOYMENT_REASON}
+**Source Branch:** ${process.env.FEATURE_BRANCH}
+**Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
+**Deployment Reason:** ${process.env.DEPLOYMENT_REASON}
 
-            ### Changes included (${changeCount} files):
-            \`\`\`
-            ${changedFiles.join('\n')}
-            \`\`\`
+### Changes included (${changeCount} files):
+\`\`\`
+${changedFiles.join('\n')}
+\`\`\`
 
-            **CODEOWNERS review required for deployment**`;
+**CODEOWNERS review required for deployment**`;
 
-            const { data: pr } = await github.rest.pulls.create({
+            // Create PR into 'dev' (or TARGET_ENV if you want different behavior)
+            const baseBranch = 'dev';
+            const headBranch = process.env.FEATURE_BRANCH;
+
+            // Check for an existing open PR from head->base to avoid duplicates
+            const { data: existingPRs } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🚀 ${process.env.TARGET_ENV.toUpperCase()}: Deploy ${process.env.FEATURE_BRANCH}`,
-              body: prBody,
-              head: process.env.FEATURE_BRANCH,
-              base: process.env.TARGET_ENV
+              head: `${context.repo.owner}:${headBranch}`,
+              base: baseBranch,
+              state: 'open'
             });
 
-            console.log(`✅ Deployment PR created: ${pr.html_url}`);
-            console.log(`👥 CODEOWNERS will be automatically assigned`);
+            if (existingPRs && existingPRs.length > 0) {
+              console.log(`Open PR already exists: ${existingPRs[0].html_url}`);
+            } else {
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚀 DEV: Merge ${headBranch} -> ${baseBranch}`,
+                body: prBody,
+                head: headBranch,
+                base: baseBranch
+              });
+              console.log(`✅ Deployment PR created: ${pr.html_url}`);
+            }
 
-      - name: Deploy directly to Dev
-        if: github.event.inputs.environment == 'dev'
+      - name: Deploy directly to Dev (local/test step)
+        if: ${{ github.event.inputs.environment == 'dev' || github.event_name == 'push' }}
         run: |
-          echo "🚀 Direct deployment to DEV environment"
+          echo "🚀 Direct deployment to DEV environment (or test run for push)"
           echo "📋 Changes: ${{ steps.changes.outputs.change_count }} files"
-          # Add actual deployment commands here
+          # Place your real deployment commands here
