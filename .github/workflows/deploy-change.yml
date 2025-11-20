@@ -14,9 +14,11 @@ on:
       feature_branch:
         description: 'Feature branch to deploy'
         required: true
+        type: string
       deployment_reason:
         description: 'Reason for deployment'
         required: true
+        type: string
 
 jobs:
   deploy-feature:
@@ -36,7 +38,7 @@ jobs:
           git fetch origin ${{ github.event.inputs.environment }}
           CHANGED_FILES=$(git diff --name-only origin/${{ github.event.inputs.environment }}...HEAD || echo "")
           echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
-          CHANGE_COUNT=$(echo "$CHANGED_FILES" | wc -l | tr -d ' ')
+          CHANGE_COUNT=$(echo "$CHANGED_FILES" | grep -cve '^\s*$' || echo 0)
           echo "change_count=$CHANGE_COUNT" >> $GITHUB_OUTPUT
 
       - name: Create Deployment PR
@@ -53,9 +55,7 @@ jobs:
             const changedFiles = process.env.CHANGED_FILES
               ? process.env.CHANGED_FILES.split('\n').filter(Boolean)
               : [];
-
-            const changeCount = process.env.CHANGE_COUNT;
-
+            const changeCount = process.env.CHANGE_COUNT || 0;
             const prBody = `## Feature Deployment to ${process.env.TARGET_ENV.toUpperCase()}
 **Source Branch:** ${process.env.FEATURE_BRANCH}
 **Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
