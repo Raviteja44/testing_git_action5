@@ -53,37 +53,35 @@ jobs:
         env:
           TARGET_ENV: ${{ github.event.inputs.environment }}
           FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
+          CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
+          CHANGE_COUNT: ${{ steps.changes.outputs.change_count }}
+          DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason }}
         with:
           script: |
-            const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
-            const changeCount = `${{ steps.changes.outputs.change_count }}`;
-            const deploymentReason = `${{ github.event.inputs.deployment_reason }}`;
+            const changedFiles = process.env.CHANGED_FILES.split('\n').filter(Boolean);
             
-            const prBody = `## Independent Feature Deployment
-**Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
-**Feature Branch:** ${process.env.FEATURE_BRANCH}
-**Deployment Reason:** ${deploymentReason}
-
-### Files being deployed (ONLY your changes):
-\`\`\`
-${changedFiles.join('\n')}
-\`\`\`
-
-### Changes included:
-${changeCount} files modified
-
-**This deploys ONLY the changes from ${process.env.FEATURE_BRANCH} branch**`;
+            let prBody = '## Independent Feature Deployment\n';
+            prBody += '**Target Environment:** ' + process.env.TARGET_ENV.toUpperCase() + '\n';
+            prBody += '**Feature Branch:** ' + process.env.FEATURE_BRANCH + '\n';
+            prBody += '**Deployment Reason:** ' + process.env.DEPLOYMENT_REASON + '\n\n';
+            prBody += '### Files being deployed (ONLY your changes):\n';
+            prBody += '```\n';
+            prBody += changedFiles.join('\n');
+            prBody += '\n```\n\n';
+            prBody += '### Changes included:\n';
+            prBody += process.env.CHANGE_COUNT + ' files modified\n\n';
+            prBody += '**This deploys ONLY the changes from ' + process.env.FEATURE_BRANCH + ' branch**';
 
             const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🚀 ${process.env.TARGET_ENV.toUpperCase()}: Deploy ${process.env.FEATURE_BRANCH}`,
+              title: '🚀 ' + process.env.TARGET_ENV.toUpperCase() + ': Deploy ' + process.env.FEATURE_BRANCH,
               body: prBody,
               head: process.env.FEATURE_BRANCH,
               base: process.env.TARGET_ENV
             });
 
-            console.log(`Deployment PR created: ${pr.html_url}`);
+            console.log('Deployment PR created: ' + pr.html_url);
 
       - name: Deploy to Environment
         run: |
