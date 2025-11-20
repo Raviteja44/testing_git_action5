@@ -1,4 +1,4 @@
-name: Deploy changes to Environment
+name: Deploy Feature to Environment
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ on:
       feature_branch:
         description: 'Feature branch to deploy'
         required: true
-        default: 'dev'
       deployment_reason:
         description: 'Reason for deployment'
         required: true
@@ -25,24 +24,17 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout specific feature branch
+      - name: Checkout feature branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.feature_branch }}
+          fetch-depth: 0
 
-      - name: Get changes for this feature only
+      - name: Get changes
         id: changes
         run: |
-          if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
-            BASE_BRANCH="dev"
-          elif [ "${{ github.event.inputs.environment }}" == "uat" ]; then
-            BASE_BRANCH="uat"
-          else
-            BASE_BRANCH="prod"
-          fi
-          
-          git fetch origin $BASE_BRANCH --depth=1
-          CHANGED_FILES=$(git diff --name-only origin/$BASE_BRANCH...HEAD || echo "")
+          git fetch origin ${{ github.event.inputs.environment }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.inputs.environment }}...HEAD || echo "")
           echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
           CHANGE_COUNT=$(echo "$CHANGED_FILES" | wc -l | tr -d ' ')
           echo "change_count=$CHANGE_COUNT" >> $GITHUB_OUTPUT
@@ -51,43 +43,40 @@ jobs:
         if: github.event.inputs.environment != 'dev'
         uses: actions/github-script@v7
         env:
-          TARGET_ENV: ${{ github.event.inputs.environment }}
           FEATURE_BRANCH: ${{ github.event.inputs.feature_branch }}
-          CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
-          CHANGE_COUNT: ${{ steps.changes.outputs.change_count }}
-          DEPLOYMENT_REASON: ${{ github.event.inputs.deployment_reason }}
+          TARGET_ENV: ${{ github.event.inputs.environment }}
         with:
           script: |
-            const changedFiles = process.env.CHANGED_FILES.split('\n').filter(Boolean);
+            const changedFiles = `${{ steps.changes.outputs.changed_files }}`.split('\n').filter(Boolean);
+            const changeCount = `${{ steps.changes.outputs.change_count }}`;
             
-            let prBody = '## Independent Feature Deployment\n';
-            prBody += '**Target Environment:** ' + process.env.TARGET_ENV.toUpperCase() + '\n';
-            prBody += '**Feature Branch:** ' + process.env.FEATURE_BRANCH + '\n';
-            prBody += '**Deployment Reason:** ' + process.env.DEPLOYMENT_REASON + '\n\n';
-            prBody += '### Files being deployed (ONLY your changes):\n';
-            prBody += '```\n';
-            prBody += changedFiles.join('\n');
-            prBody += '\n```\n\n';
-            prBody += '### Changes included:\n';
-            prBody += process.env.CHANGE_COUNT + ' files modified\n\n';
-            prBody += '**This deploys ONLY the changes from ' + process.env.FEATURE_BRANCH + ' branch**';
+            const prBody = `## Feature Deployment to ${process.env.TARGET_ENV.toUpperCase()}
+**Source Branch:** ${process.env.FEATURE_BRANCH}
+**Target Environment:** ${process.env.TARGET_ENV.toUpperCase()}
+**Deployment Reason:** ${{ github.event.inputs.deployment_reason }}
+
+### Changes included (${changeCount} files):
+\`\`\`
+${changedFiles.join('\n')}
+\`\`\`
+
+**CODEOWNERS review required for deployment**`;
 
             const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: '🚀 ' + process.env.TARGET_ENV.toUpperCase() + ': Deploy ' + process.env.FEATURE_BRANCH,
+              title: `🚀 ${process.env.TARGET_ENV.toUpperCase()}: Deploy ${process.env.FEATURE_BRANCH}`,
               body: prBody,
               head: process.env.FEATURE_BRANCH,
               base: process.env.TARGET_ENV
             });
 
-            console.log('Deployment PR created: ' + pr.html_url);
+            console.log(`✅ Deployment PR created: ${pr.html_url}`);
+            console.log(`👥 CODEOWNERS will be automatically assigned`);
 
-      - name: Deploy to Environment
+      - name: Deploy directly to Dev
+        if: github.event.inputs.environment == 'dev'
         run: |
-          echo "🎯 DEPLOYING ONLY YOUR FEATURE"
-          echo "📁 Your files being deployed:"
-          echo "${{ steps.changes.outputs.changed_files }}"
-          echo ""
-          echo "✅ Deploying to ${{ github.event.inputs.environment }} environment"
-          echo "🔒 Other team members' work is NOT affected"
+          echo "🚀 Direct deployment to DEV environment"
+          echo "📋 Changes: ${{ steps.changes.outputs.change_count }} files"
+          # Add actual deployment commands here
